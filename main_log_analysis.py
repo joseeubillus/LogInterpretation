@@ -115,7 +115,7 @@ def plot(las_file, well_data):
                     if curve.startswith('RES') ==True:
                         fig.add_trace(go.Scatter(x=well_data[curve], y=well_data.index), row=1, col=curve_index)
                         fig.update_xaxes(type='log',row=1,col=curve_index)
-                    curve_index+=1
+                    
 
                 fig.update_layout(height=1000,
                                    yaxis={'title':'DEPTH','autorange':'reversed'},showlegend=False)
