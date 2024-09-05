@@ -261,3 +261,152 @@ def streamlit_file_uploader(label,key,accept_multiple_files=False,file_types=['l
     uploaded_files = st.sidebar.file_uploader(label, key=key, accept_multiple_files=accept_multiple_files)
 
     return uploaded_files
+
+def Merge_curves(load_data):
+
+    def combine_all_curves(df1, df2):
+        available_curves1 = df1.columns
+        available_curves2 = df2.columns
+        common_curves = set(available_curves1) & set(available_curves2)
+        uncommon_curves1 = set(available_curves1) - common_curves
+        uncommon_curves2 = set(available_curves2) - common_curves
+
+        # Combine DataFrames on depth index
+        combined_data = pd.DataFrame(index=pd.concat([df1, df2], axis=0).sort_index().index.unique())
+
+        # Process common curves
+        for curve_name in common_curves:
+            df1_sorted = df1[[curve_name]].sort_index()
+            df2_sorted = df2[[curve_name]].sort_index()
+
+            # Combine the curves with precedence given to df1
+            combined_curve = pd.concat([df1_sorted, df2_sorted[~df2_sorted.index.isin(df1_sorted.index)]], axis=0).sort_index()
+
+            combined_data[f"{curve_name}_combined"] = combined_curve[curve_name]
+
+        # Process uncommon curves
+        for curve_name in uncommon_curves1:
+            combined_data[curve_name] = df1[curve_name]
+        for curve_name in uncommon_curves2:
+            combined_data[curve_name] = df2[curve_name]
+
+        return combined_data
+
+    
+    uploaded_file = st.sidebar.file_uploader("Upload your First LAS file", type=[".las"])
+    uploaded_file2 = st.sidebar.file_uploader("Upload your Second LAS file", type=[".las"])
+
+    # Load the uploaded files
+    las_file1, well_data1 = load_data(uploaded_file)
+    las_file2, well_data2 = load_data(uploaded_file2)
+
+    # Display the dataframes in the main app
+    if well_data1 is not None:
+        st.subheader("First LAS File Data")
+        st.write(well_data1)
+
+    if well_data2 is not None:
+        st.subheader("Second LAS File Data")
+        st.write(well_data2)
+
+    # Combine and sum curves if both files are uploaded
+    if well_data1 is not None and well_data2 is not None:
+        combined_data = combine_all_curves(well_data1, well_data2)
+    elif well_data1 is not None:
+        combined_data = well_data1.copy()
+    else:
+        combined_data = None
+
+    if combined_data is not None:
+        st.subheader("Combined Data")
+        st.write(combined_data)
+
+def Merge_bydepth(load_data):
+    def combine_selected_curves(df1, df2, selected_curves, user_depth):
+        combined_data = pd.DataFrame(index=pd.concat([df1, df2], axis=0).sort_index().index.unique())
+
+        for curve_name in selected_curves:
+            # Ensure depth is sorted
+            df1_sorted = df1[[curve_name]].sort_index()
+            df2_sorted = df2[[curve_name]].sort_index()
+
+            # Initialize a Series to store the combined curve
+            combined_curve = pd.Series(index=combined_data.index, dtype='float64')
+
+            # Iterate over the index to avoid duplication
+            for depth in combined_curve.index:
+                if depth in df1_sorted.index and depth in df2_sorted.index:
+                    if depth <= user_depth:
+                        combined_curve[depth] = df1_sorted[curve_name].loc[depth]
+                    else:
+                        combined_curve[depth] = df2_sorted[curve_name].loc[depth]
+                elif depth in df1_sorted.index:
+                    combined_curve[depth] = df1_sorted[curve_name].loc[depth]
+                elif depth in df2_sorted.index:
+                    combined_curve[depth] = df2_sorted[curve_name].loc[depth]
+
+            # Add the combined curve to the final DataFrame
+            combined_data[f"{curve_name}_combined"] = combined_curve
+
+        return combined_data
+
+    
+    uploaded_file = st.sidebar.file_uploader("Upload your First LAS file", type=[".las"])
+    uploaded_file2 = st.sidebar.file_uploader("Upload your Second LAS file", type=[".las"])
+
+    # Load the uploaded files
+    las_file1, well_data1 = load_data(uploaded_file)
+    las_file2, well_data2 = load_data(uploaded_file2)
+
+    # Get depth ranges if data is available
+    if well_data1 is not None:
+        min_depth1, max_depth1 = well_data1.index.min(), well_data1.index.max()
+
+    if well_data2 is not None:
+        min_depth2, max_depth2 = well_data2.index.min(), well_data2.index.max()
+
+    # Display the dataframes in the main app
+    if well_data1 is not None:
+        st.subheader("First LAS File Data")
+        st.write(well_data1)
+
+    if well_data2 is not None:
+        st.subheader("Second LAS File Data")
+        st.write(well_data2)
+
+    # Allow user to select curves to merge
+    if well_data1 is not None and well_data2 is not None:
+        available_curves1 = well_data1.columns
+        available_curves2 = well_data2.columns
+        common_curves = list(set(available_curves1) & set(available_curves2))
+
+        selected_curves = st.multiselect(
+            "Select curves to merge:", options=common_curves, default=common_curves[:2]
+        )
+
+        if selected_curves:
+            # Input for depth range to merge
+            merge_start_depth = st.number_input("Start depth for merging", value=min_depth1 if well_data1 is not None else 0)
+            merge_end_depth = st.number_input("End depth for merging", value=max_depth1 if well_data1 is not None else 1000)
+
+            # User input for the depth threshold
+            user_depth = st.number_input("Enter the depth at which giving the second LAS file the priorty ", value=(merge_start_depth + merge_end_depth) / 2)
+
+            # Filter the data based on the selected depth range
+            if well_data1 is not None:
+                well_data1 = well_data1[(well_data1.index >= merge_start_depth) & (well_data1.index <= merge_end_depth)]
+
+            if well_data2 is not None:
+                well_data2 = well_data2[(well_data2.index >= merge_start_depth) & (well_data2.index <= merge_end_depth)]
+
+            combined_data = combine_selected_curves(well_data1, well_data2, selected_curves, user_depth)
+        else:
+            st.warning("Please select at least one curve to merge.")
+            combined_data = None
+    else:
+        combined_data = None
+
+    # Display the combined data
+    if combined_data is not None:
+        st.subheader("Combined Data")
+        st.write(combined_data)
