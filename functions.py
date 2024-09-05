@@ -7,6 +7,7 @@ import plotly.express as px
 import lasio
 from io import StringIO
 import streamlit as st
+from ruptures import Pelt
 
 # Functions
 # Modified from andymcdo repo
@@ -410,3 +411,21 @@ def Merge_bydepth(load_data):
     if combined_data is not None:
         st.subheader("Combined Data")
         st.write(combined_data)
+
+def pelt_segmentation(well_data, curve, depth_interval=3, penalty=3, subsample_rate=10):
+    """Apply PELT segmentation to the selected curve and return the segmented curve."""
+    segmented_curve = well_data[curve].copy()
+
+    # Subsampling the data
+    subsampled_data = well_data[curve].values[::subsample_rate].reshape(-1, 1)
+
+    model = Pelt(model="l2").fit(subsampled_data)
+    result = model.predict(pen=penalty)
+
+    for i in range(len(result) - 1):
+        start_idx = result[i] * subsample_rate
+        end_idx = result[i + 1] * subsample_rate
+        if end_idx <= len(segmented_curve):
+            segmented_curve.iloc[start_idx:end_idx] = well_data[curve].iloc[start_idx:end_idx].mean()
+
+    return segmented_curve
