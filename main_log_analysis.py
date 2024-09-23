@@ -3,6 +3,7 @@ import functions as ft
     
 # Main code - Front end
 # Initial streamlit page configuration
+
 st.set_page_config(page_title="Vaulted Log Data Explorer", page_icon="📊", 
                    layout="wide",initial_sidebar_state='expanded')
 
@@ -14,10 +15,26 @@ tools = st.sidebar.radio('Select tool required: ',('Visualization and processing
                                            'Merge single well log curves by depth'))
 if tools == 'Merge single well log curves':
     st.title(tools)
-    st.text('Under construction')
+    combined = ft.merge_single_well_curves()
+    if combined is None:
+        st.warning('No files have been uploaded')
+    else:
+        st.subheader('Data Completeness')
+        ft.missing(combined)
+        st.subheader('Data Visualization')
+        ft.plot(combined)
 elif tools == 'Merge single well log curves by depth':
     st.title(tools)
-    st.text('Under construction')
+    combined = ft.merge_by_depth()
+    if combined is None:
+        st.warning('No files have been uploaded')
+    else:
+        st.subheader('Data Completeness')
+        ft.missing(combined)
+        st.subheader('Data Visualization')
+        ft.plot(combined)
+
+
 else:
     st.title(tools)
     uploaded_file = ft.streamlit_file_uploader("Upload your LAS file",
@@ -46,11 +63,11 @@ else:
 
         # Missing data
         st.header('Data Completeness')
-        ft.missing(las_file, well_data)
+        ft.missing(well_data)
 
         # Data visualization
         st.header('Data Visualization')
-        ft.plot(las_file, well_data)
+        ft.plot(well_data)
 
         # Post-processing
         st.header('Post-processing')
