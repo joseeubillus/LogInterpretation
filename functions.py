@@ -25,6 +25,20 @@ def load_data(uploaded_file):
 
     return las_file, well_data
 
+@st.cache_data
+def load_multiple_las_files(uploaded_files):
+    """Load multiple LAS files and convert them to a list of DataFrames."""
+    las_files = []
+    well_data_list = []
+    if uploaded_files is not None:
+        for uploaded_file in uploaded_files:
+            bytes_data = uploaded_file.read()
+            stringio = StringIO(bytes_data.decode('Windows-1252'))
+            las_file = lasio.read(stringio)
+            las_files.append(las_file)
+            well_data_list.append(las_file.df())
+    return las_files, well_data_list
+
 def las_header(las_file):
     if not las_file:
         st.sidebar.warning("No LAS file loaded")
@@ -520,3 +534,106 @@ def pelt_segmentation(well_data, curve, depth_interval=3, penalty=3, subsample_r
             segmented_curve.iloc[start_idx:end_idx] = well_data[curve].iloc[start_idx:end_idx].mean()
 
     return segmented_curve
+
+def well_correlation(las_files, well_data_list):
+    """Generate well log plots side-by-side for correlation and add formation tops."""
+    if not las_files:
+        st.warning('No LAS files have been uploaded')
+        return
+
+    num_wells = len(well_data_list)
+    if num_wells < 2:
+        st.warning('At least two LAS files are required to match formations.')
+        return
+
+    columns = list(well_data_list[0].columns)
+
+    # Initialize session state to store depths for horizontal lines and filled regions
+    if 'well_lines' not in st.session_state:
+        st.session_state.well_lines = {i: [] for i in range(1, num_wells + 1)}
+    if 'filled_regions' not in st.session_state:
+        st.session_state.filled_regions = {i: [] for i in range(1, num_wells + 1)}
+
+    # Create side-by-side subplots (one column per well)
+    fig = make_subplots(rows=1, cols=num_wells, shared_yaxes=True, horizontal_spacing=0.02)
+    
+    well_names = [f'Well {i+1}' for i in range(num_wells)]
+    
+    # Plot each well log and keep track of x ranges
+    x_ranges = {}
+    for well_number, (well_data, well_name) in enumerate(zip(well_data_list, well_names), start=1):
+        st.write(f"Well {well_number}")
+
+        # Track for each well
+        primary_curve = st.selectbox(f'Select log to correlate for well {well_number}', columns, key=f'primary_well_{well_number}')
+
+        # Plot original curve for each well in its respective column
+        x_min = well_data[primary_curve].min()
+        x_max = well_data[primary_curve].max()
+        x_ranges[well_number] = (x_min, x_max)  # Store the x-axis range for filling purposes
+
+        fig.add_trace(go.Scatter(x=well_data[primary_curve], y=well_data.index, name=f'{primary_curve} (Well {well_number})', line=dict(color='blue')), row=1, col=well_number)
+
+        fig.update_xaxes(title_text=primary_curve, row=1, col=well_number)
+
+    # Log scale for resistivity curves
+    log_unit = st.checkbox('Use log scale for resistivity curves', key='log_unit')
+
+    if log_unit:
+        fig.update_xaxes(type='log')
+
+    fig.update_layout(height=1500, showlegend=True)  # Adjust height for the plot
+    # Update all traces with the same ticks in x-axis
+    fig.update_xaxes({'side': 'top', 'ticks': 'outside', 'showline': True,
+                      'showgrid': True, 'showticklabels': True,
+                      'linecolor': 'lightgrey', 'gridcolor': 'lightgrey',
+                      'linewidth': 1, 'mirror': True}, ticklabelposition='inside')
+    fig.update_yaxes(tickformat='.1f', autorange="reversed")
+
+    # Manual input for depth and well selection
+    selected_well = st.selectbox(f'Select well to add horizontal line', range(1, num_wells + 1), format_func=lambda x: f"Well {x}")
+    selected_depth = st.number_input(f'Enter depth for horizontal line in Well {selected_well}', min_value=float(well_data_list[selected_well-1].index.min()), max_value=float(well_data_list[selected_well-1].index.max()), step=0.1)
+
+    # Add horizontal line to the selected well and store it in session state
+    if st.button("Add horizontal line"):
+        st.session_state.well_lines[selected_well].append(selected_depth)  # Store the depth for the selected well
+
+    # Plot all the horizontal lines for each well
+    for well_number, depths in st.session_state.well_lines.items():
+        for depth in depths:
+            fig.add_hline(y=depth, line=dict(color='gray', dash='dash', width=2),  # Change line color to gray
+                          annotation_text=f"Depth {depth} m", row=1, col=well_number)
+
+    # Filling the space between two horizontal lines
+    selected_well_for_fill = st.selectbox(f'Select well to fill between two lines', range(1, num_wells + 1), format_func=lambda x: f"Well {x}")
+    
+    if len(st.session_state.well_lines[selected_well_for_fill]) >= 2:
+        selected_line_1 = st.selectbox('Select first line for fill', st.session_state.well_lines[selected_well_for_fill])
+        selected_line_2 = st.selectbox('Select second line for fill', st.session_state.well_lines[selected_well_for_fill])
+
+        if st.button("Fill between selected lines"):
+            # Ensure selected lines are in the correct order
+            line_1, line_2 = sorted([selected_line_1, selected_line_2])
+
+            # Add filled region to the selected well in session state
+            st.session_state.filled_regions[selected_well_for_fill].append((line_1, line_2))
+
+    # Plot filled regions between the selected lines
+    for well_number, filled_regions in st.session_state.filled_regions.items():
+        x_min, x_max = x_ranges[well_number]  # Get x-axis range for the current well
+        for (line_1, line_2) in filled_regions:
+            fig.add_shape(
+                type="rect",
+                xref=f"x{well_number}",
+                yref=f"y{well_number}",
+                x0=x_min, x1=x_max,  # Fill the entire width of the plot using the actual x-axis range
+                y0=line_1, y1=line_2,
+                fillcolor="rgba(128, 128, 128, 0.3)",  # Change fill color to gray with transparency
+                line_width=0,
+                row=1, col=well_number
+            )
+
+    # Show the updated plot with horizontal lines and filled regions
+    st.plotly_chart(fig)
+
+    
