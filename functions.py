@@ -288,54 +288,101 @@ def plot(well_data):
 def post_processing(las_file, well_data):
     if not las_file:
         st.warning('No file has been uploaded')
-
     else:
+        # Initialize session state for well_data if it doesn't exist
+        if 'well_data' not in st.session_state:
+            st.session_state['well_data'] = well_data.copy()
+
+        # Initialize session state for logs_to_plot if it doesn't exist
+        if 'logs_to_plot' not in st.session_state:
+            st.session_state['logs_to_plot'] = []
+
         with st.expander('Custom Calculations'):
             st.write('Select the curves to use for custom calculations.')
-            custom_cols = st.multiselect('Select Curves', well_data.columns)
+
+            # Inputs for creating a custom column
+            column_name = st.text_input('Enter the name of the new column to store the calculation.')
+            custom_cols = st.multiselect('Select Curves', st.session_state['well_data'].columns)
             expression = st.text_input('Enter the expression to calculate using the selected curves.')
 
-            # Evaluate the expression
-            if expression and custom_cols:
-                try:
-                    local_dict = {col: well_data[col] for col in custom_cols}
+            # Add a Calculate button
+            if st.button('Calculate'):
+                if expression and custom_cols and column_name:
+                    try:
+                        # Ensure column name is unique in well_data
+                        if column_name in st.session_state['well_data'].columns:
+                            st.warning(f"Column '{column_name}' already exists. Please choose a different name.")
+                        else:
+                            # Create a dictionary of selected columns for evaluation
+                            local_dict = {col: st.session_state['well_data'][col] for col in custom_cols}
 
-                    # Evaluate the expression
-                    well_data['Custom Calculation'] = pd.eval(expression, local_dict=local_dict)
-                    #Display
-                    st.write(well_data['Custom Calculation'])
-                except Exception as e:
-                    st.error(f"An error occurred: {e}")
-            else:
-                st.warning('Please enter an expression and select curves to calculate')
+                            # Evaluate the expression and create a new column in the DataFrame
+                            st.session_state['well_data'][column_name] = pd.eval(expression, local_dict=local_dict, engine='python')
 
+                            # Display the updated DataFrame with the new custom column
+                            st.write('Updated Data with Custom Columns:')
+                            st.dataframe(st.session_state['well_data'])
+
+                    except Exception as e:
+                        st.error(f"An error occurred: {e}")
+                        st.write(f"Error details: {str(e)}")
+                else:
+                    st.warning('Please enter an expression, select curves, and provide a column name.')
+
+        # Plot columns selected by the user in independent subplots
+        # Persist selected logs_to_plot in session_state
+        st.session_state['logs_to_plot'] = st.multiselect(
+            'Select curves to plot',
+            st.session_state['well_data'].columns,
+            default=st.session_state['logs_to_plot']
+        )
+
+        if st.session_state['logs_to_plot']:
+            fig = make_subplots(rows=1, cols=len(st.session_state['logs_to_plot']), shared_yaxes=True)
+            for i, log in enumerate(st.session_state['logs_to_plot'], start=1):
+                fig.add_trace(go.Scatter(x=st.session_state['well_data'][log], y=st.session_state['well_data'].index, showlegend=False), row=1, col=i)
+                fig.update_xaxes(title_text=log, row=1, col=i, tickformat='.1f')
+            fig.update_layout(height=1000, yaxis={'title': 'DEPTH', 'autorange': 'reversed'})
+            fig.update_xaxes({'side': 'top','ticks':'outside','showline':True,
+                'showgrid':True,'showticklabels':True,
+                'linecolor':'lightgrey','gridcolor':'lightgrey',
+                'linewidth':1,'mirror':True},ticklabelposition='inside')
+            st.plotly_chart(fig)
+
+        # Display predefined calculations
         with st.expander('Predefined Calculations'):
-            calcs = st.selectbox('Select a Calculation', ('None', 
-                                                           'Shale Volume (Vsh)'))
+            calcs = st.selectbox('Select a Calculation', ('None', 'Shale Volume (Vsh)'))
             if calcs == 'Shale Volume (Vsh)':
-                GR = st.selectbox('Select a Gamma Ray Curve', well_data.columns, index=None)
-                if GR == None:
+                GR = st.selectbox('Select a Gamma Ray Curve', st.session_state['well_data'].columns, index=None)
+                if GR is None:
                     st.warning('Please select a Gamma Ray curve.')
                 else:
-                    well_data['VSH'] = (well_data[GR] - well_data[GR].min()) / (well_data[GR].max() - well_data[GR].min())
-                    
-                    # Plot the VSH curve versus depth and the net sand (net sand is estimated with an if condition if Vsh<0.5,sand,else shale)
+                    st.session_state['well_data']['VSH'] = (st.session_state['well_data'][GR] - st.session_state['well_data'][GR].min()) / (st.session_state['well_data'][GR].max() - st.session_state['well_data'][GR].min())
+
+                    # Plot the VSH curve versus depth and the net sand (net sand is estimated with an if condition if Vsh<0.5, sand, else shale)
                     fig = make_subplots(rows=1, cols=2, shared_yaxes=True)
-                    fig.add_trace(go.Scatter(x=well_data['VSH'], y=well_data.index,showlegend=False), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=st.session_state['well_data']['VSH'], y=st.session_state['well_data'].index, showlegend=False), row=1, col=1)
                     fig.update_xaxes(title_text='Vsh', row=1, col=1)
-                    #Update the x-axis ticks
-                    fig.update_xaxes({'side': 'top','ticks':'outside','showline':True,
-                                    'showgrid':True,'showticklabels':True,
-                                    'linecolor':'lightgrey','gridcolor':'lightgrey',
-                                    'linewidth':1,'mirror':True})
+
+                    # Update the x-axis ticks
+                    fig.update_xaxes({
+                        'side': 'top', 'ticks': 'outside', 'showline': True,
+                        'showgrid': True, 'showticklabels': True,
+                        'linecolor': 'lightgrey', 'gridcolor': 'lightgrey',
+                        'linewidth': 1, 'mirror': True
+                    })
+
                     # Create net sand variable
-                    well_data['NET_SAND'] = np.where(well_data['VSH'] < 0.5, 1, 0)
+                    st.session_state['well_data']['NET_SAND'] = np.where(st.session_state['well_data']['VSH'] < 0.5, 1, 0)
+
                     # Fill the net sand with color
-                    fig.add_trace(go.Scatter(x=well_data['NET_SAND'], y=well_data.index, fill='tozeroy',mode='lines', line=dict(width=0), 
-                                             fillcolor='#ffbd2e',showlegend=True,name='Sand'), row=1, col=2)
-                    fig.update_xaxes(title_text='Net Sand',row=1, col=2)
-                    fig.update_layout(height=1000, yaxis={'title':'DEPTH','autorange':'reversed'},showlegend=True)
+                    fig.add_trace(go.Scatter(x=st.session_state['well_data']['NET_SAND'], y=st.session_state['well_data'].index, fill='tozeroy', mode='lines', line=dict(width=0),
+                                             fillcolor='#ffbd2e', showlegend=True, name='Sand'), row=1, col=2)
+                    fig.update_xaxes(title_text='Net Sand', row=1, col=2)
+                    fig.update_layout(height=1000, yaxis={'title': 'DEPTH', 'autorange': 'reversed'}, showlegend=True)
                     st.plotly_chart(fig, use_container_width=True)
+
+
 
 def streamlit_file_uploader(label,key,accept_multiple_files=False,file_types=['las','LAS']):
     uploaded_files = None
